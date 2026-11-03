@@ -1,0 +1,160 @@
+// Israel Transit Pipeline: gold layer star schema
+// Paste into https://dbdiagram.io to render. Hover a column to see its note.
+// Vocabulary (operator > line > route > trip > stop visit, station > stop) is defined in schema.md.
+
+Project israel_transit {
+  database_type: 'Delta Lake (Parquet) / Spark SQL'
+  Note: '''
+  Gold layer, built daily from the Israel MOT GTFS feed.
+  Fact = one stop visit (one trip at one of its stops). Dimensions = routes, stops, dates.
+  Naming: *_id = stable identifier, *_public_* = what riders see (never unique), *_key = surrogate key of one dimension version.
+  dim_route and dim_stop are SCD type 2: a new version row is added when an attribute changes,
+  and each fact row points to the version that was valid on its service_date.
+  '''
+}
+
+// ─────────────────────────── Fact ───────────────────────────
+
+Table fct_planned_stop_visit {
+  service_date            date      [not null, note: 'The operating day the trip belongs to (Israel local). Partition column. A trip at 00:30 can still belong to the previous service date (GTFS times can exceed 24:00).']
+  trip_id                 string    [not null, note: 'One run of a route at a specific time. Changes with every feed, so it identifies a trip only within one service date (degenerate dimension).']
+  stop_sequence           int       [not null, note: 'Position of the stop within the trip (1, 2, 3...). Needed because a circular route can visit the same stop twice.']
+  route_key               bigint    [not null, note: 'The route this trip runs: the dim_route version valid on service_date.']
+  stop_key                bigint    [not null, note: 'The stop being visited: the dim_stop version valid on service_date.']
+  trip_headsign           string    [note: 'Destination text on the vehicle sign.']
+  trip_start_time         timestamp [not null, note: 'Planned departure from the first stop of the trip. Together with route_id this is how real-time (SIRI) records are matched to planned trips.']
+  planned_arrival         timestamp [not null, note: 'Planned arrival at this stop (GTFS HH:MM:SS offset converted to a real timestamp).']
+  planned_departure       timestamp [not null, note: 'Planned departure from this stop. Almost always equal to planned_arrival in the Israeli feed.']
+  boarding_allowed        boolean   [note: 'Passengers may get on here (GTFS pickup_type = 0). False at the last stop, so a bus not stopping there is not a skip.']
+  alighting_allowed       boolean   [note: 'Passengers may get off here (GTFS drop_off_type = 0). False at the first stop.']
+  dist_from_trip_start_m  int       [note: 'Meters along the route from the first stop (GTFS shape_dist_traveled). Helps match GPS positions to stops.']
+  is_first_stop           boolean
+  is_last_stop            boolean
+  feed_date               date      [not null, note: 'Which daily GTFS feed produced this row (lineage).']
+
+  Note: '''
+  GRAIN: one row = one stop visit = one trip at one of its stops, on one service date.
+  Example: on 2026-11-03 the 07:30 trip of route 9690 is planned to reach stop 12345, its 7th stop, at 07:52.
+  Natural key: (service_date, trip_id, stop_sequence). ~4.7M rows on a weekday, ~2.4M Friday, ~0.8M Saturday.
+  '''
+
+  indexes {
+    (service_date, trip_id, stop_sequence) [pk]
+  }
+}
+
+// ──────────────────────── Dimensions ────────────────────────
+
+Table dim_route {
+  route_key           bigint    [pk, note: 'Surrogate key: one value per version of a route.']
+  route_id            string    [not null, note: 'GTFS route ID. A route = one direction of one variant of a line: a fixed ordered list of stops. Stable across feeds.']
+  route_direction     string    [note: '1 and 2 = the two opposite directions of the line, 3 = circular. From route_desc ("11337-1-0" -> 1).']
+  route_variant       string    [note: 'Which version of the line: 0 or # = base, other values = short-turns, detours, extensions. MOT calls it alternative. From route_desc ("11337-1-0" -> 0).']
+  line_id             string    [note: 'Line license number (MOT makat), from route_desc ("11337-1-0" -> 11337). Covers both directions and all variants. Group by this to analyse a line. Empty for trains.']
+  line_public_number  string    [note: 'The number on the bus, e.g. 337. Display only: unrelated lines in different regions share numbers. From route_short_name.']
+  operator_id         string    [note: 'GTFS agency_id.']
+  operator_name       string    [note: 'e.g. Egged, Dan, Kavim, Israel Railways. Stored on the route (no separate dim) to keep a star, not a snowflake.']
+  mode                string    [note: 'bus, train, light_rail, cable_car, shared_taxi, on_demand. From GTFS route_type.']
+  origin_name         string    [note: 'First stop of the route, parsed from route_long_name.']
+  origin_city         string
+  destination_name    string    [note: 'Last stop of the route, parsed from route_long_name.']
+  destination_city    string
+  valid_from          date      [not null, note: 'First service_date this version applies to.']
+  valid_to            date      [note: 'Last service_date this version applies to. NULL while current.']
+  is_current          boolean   [not null]
+
+  Note: '''
+  GRAIN: one row = one version of one route (one direction of one variant of a line).
+  Example: line 11337 (public number 337, Kavim, Modiin Illit - Jerusalem) has route 9690 (direction 1) and route 9692 (direction 2).
+  Line 10337 (also public number 337, GB Tours, near Haifa) has two more routes.
+  New version when the operator, names or mode change (e.g. a line moves to a new operator after a tender).
+  '''
+}
+
+Table dim_stop {
+  stop_key            bigint    [pk, note: 'Surrogate key: one value per version of a stop.']
+  stop_id             string    [not null, note: 'GTFS stop ID. Stable across feeds.']
+  stop_public_code    string    [note: 'Number on the stop sign, the one riders type into apps. From stop_code.']
+  stop_name           string    [note: 'Usually "street / cross-street".']
+  street              string    [note: 'Parsed from stop_desc.']
+  city                string    [note: 'Parsed from stop_desc.']
+  lat                 double    [note: 'Latitude (WGS84). A change creates a new version: 51 stops moved within 25 days.']
+  lon                 double    [note: 'Longitude (WGS84).']
+  station_id          string    [note: 'The station (central bus station, train station, terminal) this stop is part of. NULL for street stops. From parent_station.']
+  station_name        string
+  platform            string    [note: 'Platform number inside the station, parsed from stop_desc.']
+  floor               string    [note: 'Floor inside the station, parsed from stop_desc.']
+  valid_from          date      [not null]
+  valid_to            date
+  is_current          boolean   [not null]
+
+  Note: '''
+  GRAIN: one row = one version of one stop: a physical point where vehicles stop (pole, shelter, platform).
+  Stations are NOT rows: vehicles never stop at a station itself, only at the stops inside it, so station is an attribute of a stop.
+  New version when location, name or station changes.
+  '''
+}
+
+Table dim_date {
+  date                date      [pk, note: 'Calendar date (= service_date in the fact).']
+  day_of_week         tinyint   [note: '0 = Sunday ... 6 = Saturday (the Israeli week starts on Sunday).']
+  day_name            string
+  is_weekend          boolean   [note: 'Friday or Saturday: service is reduced on Friday and mostly absent until Saturday evening.']
+  is_holiday          boolean   [note: 'Israeli public holiday or holiday eve.']
+  holiday_name        string
+  week_start          date      [note: 'Sunday of that week.']
+  month               tinyint
+  year                smallint
+
+  Note: 'GRAIN: one row = one calendar day.'
+}
+
+Ref: fct_planned_stop_visit.route_key > dim_route.route_key
+Ref: fct_planned_stop_visit.stop_key > dim_stop.stop_key
+Ref: fct_planned_stop_visit.service_date > dim_date.date
+
+// ─────────────── Future: real-time (not built yet) ───────────────
+
+Table fct_observed_stop_visit {
+  service_date        date      [not null]
+  route_key           bigint    [not null]
+  stop_key            bigint    [not null]
+  trip_start_time     timestamp [not null, note: 'From SIRI OriginAimedDepartureTime; matches the planned trip.']
+  stop_sequence       int
+  observed_arrival    timestamp [note: 'When the vehicle GPS trace passed closest to the stop.']
+  min_distance_m      double    [note: 'How close the vehicle got to the stop. Large = probably skipped.']
+  vehicle_ref         string    [note: 'SIRI vehicle id (license plate).']
+
+  Note: 'GRAIN: one row = one stop visit inferred from real-time GPS (SIRI). Planned facts stay immutable; observations are a separate fact.'
+}
+
+Table fct_stop_visit_performance {
+  service_date        date      [not null]
+  route_key           bigint    [not null]
+  stop_key            bigint    [not null]
+  trip_start_time     timestamp [not null]
+  stop_sequence       int
+  planned_arrival     timestamp
+  observed_arrival    timestamp
+  delay_seconds       int       [note: 'observed_arrival - planned_arrival.']
+  status              string    [note: 'on_time / late / early / skipped / trip_not_run.']
+
+  Note: 'GRAIN: one row per planned stop visit, joined to its observation. Answers "which lines are late most" and "which lines never show up".'
+}
+
+Ref: fct_observed_stop_visit.route_key > dim_route.route_key
+Ref: fct_observed_stop_visit.stop_key > dim_stop.stop_key
+Ref: fct_stop_visit_performance.route_key > dim_route.route_key
+Ref: fct_stop_visit_performance.stop_key > dim_stop.stop_key
+
+TableGroup star_planned {
+  fct_planned_stop_visit
+  dim_route
+  dim_stop
+  dim_date
+}
+
+TableGroup future_realtime {
+  fct_observed_stop_visit
+  fct_stop_visit_performance
+}
