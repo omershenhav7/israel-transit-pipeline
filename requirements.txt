@@ -1,4 +1,4 @@
-pyspark
-dbt-postgres
+pyspark==4.2.0
 geopandas
 apache-airflow==3.3.2
+boto3

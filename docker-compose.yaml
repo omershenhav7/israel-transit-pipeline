@@ -76,15 +76,17 @@ x-airflow-common: &airflow-common
     AIRFLOW_CONFIG: "/opt/airflow/config/airflow.cfg"
     # Project code (src/transit) importable from DAGs
     PYTHONPATH: /opt/airflow/src
-    # Warehouse connection used by the pipeline DAGs (conn id: warehouse)
-    AIRFLOW_CONN_WAREHOUSE: '{"conn_type": "postgres", "host": "warehouse", "port": 5432, "login": "${WAREHOUSE_USER}", "password": "${WAREHOUSE_PASSWORD}", "schema": "${WAREHOUSE_DB}"}'
+    # S3 storage for the lakehouse
+    GTFS_BUCKET: ${GTFS_BUCKET:-}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_DEFAULT_REGION: il-central-1
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-.}/src:/opt/airflow/src
-    - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
     redis:
@@ -107,23 +109,6 @@ services:
       retries: 5
       start_period: 5s
     restart: always
-
-  warehouse:
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${WAREHOUSE_USER}
-      POSTGRES_PASSWORD: ${WAREHOUSE_PASSWORD}
-      POSTGRES_DB: ${WAREHOUSE_DB}
-    volumes:
-      - warehouse-db-volume:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${WAREHOUSE_USER}"]
-      interval: 10s
-      retries: 5
-      start_period: 5s
-    restart: always
-    ports:
-      - "5432:5432"
 
   redis:
     # Redis is limited to 7.2-bookworm due to licencing change
@@ -372,4 +357,3 @@ services:
 
 volumes:
   postgres-db-volume:
-  warehouse-db-volume:
