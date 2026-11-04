@@ -67,13 +67,13 @@ Today's feed: 35,164 stops, of which 1,088 are inside one of 238 stations.
 | Term | Definition |
 |---|---|
 | **Service date** | The operating day a trip belongs to. GTFS times count from the start of that day and can go past 24:00: a trip at `25:30:00` on service date Nov 3 actually runs at 01:30 on Nov 4. |
-| **Feed date** | The day a GTFS feed was published. Each feed covers roughly the next 30–60 service dates. This pipeline builds service date *D* from the feed of day *D*. |
+| **Feed date** | The day a GTFS feed was published. Each feed covers about the next 31 service dates and nothing earlier. This pipeline builds service date *D* only from the feed of day *D*. |
 
 ### Naming rules
 
 - `*_id`: a stable identifier (`line_id`, `route_id`, `stop_id`, `station_id`, `operator_id`, `trip_id`).
 - `*_public_*`: what riders see. Useful for display, **never unique** (`line_public_number`, `stop_public_code`).
-- `*_key`: a surrogate key in the warehouse that points to one *version* of a dimension row (see SCD2 below).
+- `*_key`: a surrogate key in the gold layer that points to one *version* of a dimension row (see SCD2 below).
 
 ---
 
@@ -233,7 +233,7 @@ For example: *"On 2026-11-03, the 07:30 trip of route 9690 is planned to reach s
 
 ## Appendix: mapping to the raw GTFS fields
 
-| Warehouse column | GTFS source |
+| Gold column | GTFS source |
 |---|---|
 | `operator_id`, `operator_name` | `agency.agency_id`, `agency.agency_name` |
 | `line_id`, `route_direction`, `route_variant` | `routes.route_desc` split on `-` (e.g. `11337-1-0`) |
