@@ -1,4 +1,5 @@
 pyspark==4.2.0
+delta-spark==4.4.1
 geopandas
 apache-airflow==3.3.2
 boto3
