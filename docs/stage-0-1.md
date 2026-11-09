@@ -68,7 +68,7 @@ Oracle may reclaim an Always Free instance if CPU, network and memory all stay b
 3. **Download** to a temporary local file.
 4. **Valid zip:** the file is a zip and its contents pass a CRC check.
 5. **Complete:** `agency`, `calendar`, `routes`, `stops`, `stop_times` and `trips` are all present.
-6. **Today's feed:** the earliest `start_date` in `calendar.txt` equals the service date. This held for all three feeds checked so far (Oct 9, Nov 3, Nov 7), so confirm it on more feeds before relying on it.
+6. **Today's feed:** the earliest `start_date` in `calendar.txt` equals the service date. This held for all four feeds checked so far (Oct 9, Nov 3, Nov 7, Nov 9), so confirm it on more feeds before relying on it.
 7. **Write once:** upload with an S3 conditional write (`If-None-Match: *`), so an existing zip can never be replaced.
 
 If a check fails, retry until the end of the day, then record the day as missed.
@@ -84,6 +84,14 @@ If a check fails, retry until the end of the day, then record the day as missed.
 The real zips in `data/` can be used to confirm the checks by hand. They are too large to commit, so tests should build small zips.
 
 **Done when:** the tests pass and, running on the VM, one real feed is in S3 with a second capture refused.
+
+**Status: done** on 2026-11-09, on the VM:
+
+- The 14 tests pass in the image.
+- `capture_feed` stored `landing/gtfs/feed_date=2026-11-09/gtfs.zip` (146 MB) in about 12 seconds, including the download, the checks and the upload.
+- A second run skipped with "2026-11-09 is already captured", and the zip's ETag and timestamp were unchanged.
+
+To run it by hand, use `airflow tasks test gtfs_capture capture_feed <logical date>`. Don't use `airflow dags test` while `start_date` is still in the future: Airflow creates no task instances before a task's start date, so the run is marked successful without doing anything.
 
 ## Not in these stages
 
