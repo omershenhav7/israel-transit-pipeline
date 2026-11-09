@@ -18,7 +18,13 @@ Compute runs on one Oracle Cloud Always Free VM. Storage is in S3. This stage us
 
 **Status: done** on 2026-11-09. `scripts/stage0_spike.py` passed on the VM.
 
-Spark's libraries (Delta, `hadoop-aws` and the AWS SDK, about 760 MB) are downloaded once while building the image, into `/opt/spark-ivy`. Without that, every new container downloaded them again on its first Spark session.
+Spark's libraries (Delta, `hadoop-aws` and the AWS SDK, about 760 MB) are downloaded once while building the image. Without that, every new container downloaded them again on its first Spark session.
+
+- Delta and `hadoop-aws` go into the Ivy cache at `/opt/spark-ivy` and still load as Spark packages.
+- The AWS SDK bundle (`software.amazon.awssdk:bundle:2.35.4`, 686 MB) is downloaded separately, checked against Maven's SHA-1, and put on `spark.driver.extraClassPath`. Loaded as a Spark package, it made the executor heartbeat fail every 10 seconds with `NullPointerException ... idWithoutTopologyInfo is null`. That was narrowed down on the VM: plain Spark, Delta alone, and `hadoop-aws` without the bundle were all clean, and each run with the bundle as a package was not.
+- Only the bundle goes on the driver classpath. That classpath comes before Spark's own jars, and the bundle is fully shaded, so it can't override them. Delta's dependencies include older Jackson, Parquet and Hadoop 3.4.2 jars that would.
+
+All services share one image, `transit-airflow:latest`, so `docker compose build` also rebuilds `airflow-cli`, which is in the `debug` profile and was otherwise skipped.
 
 ### Setup (done by hand in Oracle Cloud)
 
