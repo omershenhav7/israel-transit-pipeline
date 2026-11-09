@@ -1,5 +1,7 @@
 pyspark==4.2.0
 delta-spark==4.4.1
+# PySpark 4.2 does not fully support pandas 3, which geopandas would otherwise pull in
+pandas<3
 geopandas
 apache-airflow==3.3.2
 boto3

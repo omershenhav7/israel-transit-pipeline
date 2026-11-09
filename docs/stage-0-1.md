@@ -10,12 +10,15 @@ Compute runs on one Oracle Cloud Always Free VM. Storage is in S3. This stage us
 
 | Part | Version | Status |
 |---|---|---|
-| PySpark | `4.2.0`, pinned | Tested locally. An unpinned install would now get 4.3.0, which `delta-spark` 4.4.1 does not allow. |
-| Delta | `io.delta:delta-spark_4.2_2.13:4.4.1` | Tested locally: partitioned write, `replaceWhere` on one partition, read back |
-| Java / Python | 17 / 3.13 | Tested locally, from the current Airflow image |
-| S3 connector | `org.apache.hadoop:hadoop-aws:3.5.0` | Published and matches Spark's Hadoop 3.5.0. **Not tested against S3 yet.** |
+| PySpark | `4.2.0`, pinned | Tested on the VM. An unpinned install would now get 4.3.0, which `delta-spark` 4.4.1 does not allow. |
+| Delta | `io.delta:delta-spark_4.2_2.13:4.4.1` | Tested on the VM against S3: partitioned write, `replaceWhere` on one partition, read back |
+| Java / Python | 17 / 3.13 | Tested on the VM's Arm processor, from the current Airflow image |
+| S3 connector | `org.apache.hadoop:hadoop-aws:3.5.0` | Tested on the VM against the bucket |
+| pandas | below 3, pinned | PySpark 4.2 warns that it does not fully support pandas 3, which `geopandas` would otherwise install |
 
-"Tested locally" means on a home machine. None of this has been run on the VM's Arm processor yet.
+**Status: done** on 2026-11-09. `scripts/stage0_spike.py` passed on the VM.
+
+Spark's libraries (Delta, `hadoop-aws` and the AWS SDK, about 760 MB) are downloaded once while building the image, into `/opt/spark-ivy`. Without that, every new container downloaded them again on its first Spark session.
 
 ### Setup (done by hand in Oracle Cloud)
 
@@ -38,7 +41,7 @@ Compute runs on one Oracle Cloud Always Free VM. Storage is in S3. This stage us
 3. Add a Spark session helper in `src/transit/` with the Delta and S3 settings.
 4. Build the image on the VM and start the stack.
 5. Write a small test table partitioned by `service_date` to `s3a://<bucket>/spike/`, overwrite one partition, and read it back.
-6. Delete the test data.
+6. Delete the test data. Versioning keeps the old versions, and the access key can't remove them, so they stay until a lifecycle rule expires them.
 
 **Done when:** on the VM, the read returns the expected rows from S3, including after the single-partition overwrite.
 

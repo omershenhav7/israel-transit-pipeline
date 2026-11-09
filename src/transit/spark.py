@@ -10,9 +10,10 @@ HADOOP_AWS = "org.apache.hadoop:hadoop-aws:3.5.0"
 
 def get_spark(app_name: str = "transit") -> SparkSession:
     """Local Spark with Delta and S3. Credentials come from the AWS_* environment variables."""
+    master = os.environ.get("SPARK_MASTER", "local[*]")
     builder = (
         SparkSession.builder.appName(app_name)
-        .master(os.environ.get("SPARK_MASTER", "local[*]"))
+        .master(master)
         # Read only when the JVM starts, so it has to be set here, not after
         .config("spark.driver.memory", os.environ.get("SPARK_DRIVER_MEMORY", "4g"))
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
@@ -20,6 +21,12 @@ def get_spark(app_name: str = "transit") -> SparkSession:
         .config("spark.hadoop.fs.s3a.endpoint.region", os.environ.get("AWS_DEFAULT_REGION", "eu-north-1"))
         .config("spark.sql.session.timeZone", "Asia/Jerusalem")
     )
+    if master.startswith("local"):
+        # Everything runs in one process, so talk over loopback rather than the container's hostname
+        builder = builder.config("spark.driver.host", "127.0.0.1").config("spark.driver.bindAddress", "127.0.0.1")
+    if os.environ.get("SPARK_IVY_DIR"):
+        # Libraries baked into the image at build time (see Dockerfile)
+        builder = builder.config("spark.jars.ivy", os.environ["SPARK_IVY_DIR"])
     return configure_spark_with_delta_pip(builder, extra_packages=[HADOOP_AWS]).getOrCreate()
 
 
