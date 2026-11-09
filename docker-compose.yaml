@@ -80,7 +80,7 @@ x-airflow-common: &airflow-common
     GTFS_BUCKET: ${GTFS_BUCKET:-}
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-    AWS_DEFAULT_REGION: il-central-1
+    AWS_DEFAULT_REGION: eu-north-1
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs

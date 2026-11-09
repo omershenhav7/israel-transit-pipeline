@@ -17,17 +17,17 @@ So the pipeline's main job is simple: **every day, capture that day's schedule a
 - **Buses only.** Trains, light rail, cable cars, shared taxis and on-demand services are excluded.
 - **Daily batch.** One run per day, early morning Israel time. No streaming.
 
-## Architecture: a lakehouse on AWS
+## Architecture: a lakehouse on S3, with compute on a free VM
 
 There is no database server. Data lives as files in **Amazon S3**, organised as **Delta Lake** tables. Delta adds what plain files lack: all-or-nothing writes, schema enforcement, merges and history. Storage and compute are separate.
 
 | Part | Choice | Why |
 |---|---|---|
-| Storage | Amazon S3 (Tel Aviv region) | Cheap (a few dollars a month), durable, industry standard |
+| Storage | Amazon S3 (Stockholm region, `eu-north-1`) | Cheap (a few dollars a month), durable, industry standard. Stockholm because the AWS free plan is limited to one region. |
 | Table format | Delta Lake on Parquet | Safe writes, `MERGE` for dimension history, column storage (one day of buses ≈ 23 MB) |
-| Compute | Local only: a machine at home running Airflow and PySpark | Free, no paid cloud compute. The data is small enough for one machine. The machine keeps no state, so it can be replaced. |
+| Compute | One Oracle Cloud Always Free VM (Arm, 2 OCPUs, 12 GB RAM) running Airflow and PySpark | Free and always on, so no paid compute and no home machine to keep running. The data is small enough for one machine. The machine keeps no state, so it can be replaced. |
 | Transformations | PySpark | The data would fit lighter tools. Chosen on purpose, for the experience of building with Spark. |
-| SQL access | Local Spark SQL for now | Free. Athena can be added later if the data on S3 grows too large to query locally. It would need the Glue Data Catalog only as a table list, not Glue jobs or crawlers. |
+| SQL access | Spark SQL on the VM for now | Free, apart from S3 download charges on reads. Athena can be added later if the data on S3 grows too large to query from one machine. It would need the Glue Data Catalog only as a table list, not Glue jobs or crawlers. |
 | Orchestration | Apache Airflow | Schedules the daily run, retries, alerts |
 
 ## How the schedule history is built each day
@@ -57,7 +57,7 @@ flowchart TD
     CHECKS -->|"pass: publish dimensions, then facts"| GOLD
     CHECKS -->|"fail"| ALERT["Alert, gold unchanged"]
 
-    GOLD --> SQL["Local Spark SQL<br/>queries and analysis"]
+    GOLD --> SQL["Spark SQL on the VM<br/>queries and analysis"]
 ```
 
 ### What "incremental" means for each table
@@ -97,7 +97,7 @@ flowchart LR
     FEED -->|"new zip stored:<br/>gtfs_landing Asset event with feed_date"| B1
 ```
 
-`gtfs_capture` is plain Python. Each `gtfs_build` step will run as its own local `spark-submit`. `gtfs_build` is not built yet.
+`gtfs_capture` is plain Python. Each `gtfs_build` step will run as its own `spark-submit` on the VM. `gtfs_build` is not built yet.
 
 `gtfs_capture` uses `catchup=True`, but never to backfill: a run for a past day with no zip fails without downloading and records the day as missed. That way days when the machine was off are recorded too.
 
@@ -106,9 +106,10 @@ flowchart LR
 Because a missed day can never be recovered from the Ministry, the design leans heavily on safety:
 
 - **Quality gate.** Nothing reaches gold unless keys are unique, all keys match a dimension row, and the row count is normal for that weekday.
-- **Alerts and a dead man's switch.** Failures send an alert. An external check also alerts if the pipeline *doesn't report in* by morning, which catches the laptop itself being off.
-- **Nothing important lives on the laptop.** Data is in S3 with versioning on, code is in git. A dead laptop is a reinstall, not a data loss.
-- **Cost guardrails.** An AWS budget alert, and a restricted access key that can only touch this project's bucket.
+- **Alerts and a dead man's switch.** Failures send an alert. An external check also alerts if the pipeline *doesn't report in* by morning, which catches the VM itself being down or reclaimed.
+- **Nothing important lives on the VM.** Data is in S3 with versioning on, code is in git. A lost VM is a reinstall, not a data loss. This matters because Oracle can reclaim an idle Always Free instance or change the free allowance.
+- **Cost guardrails.** An AWS budget alert, and a restricted access key that can only touch this project's bucket. The key can't permanently delete object versions.
+- **AWS plan deadline.** The account is on the AWS free plan, which can't incur charges but closes on May 6, 2027, or sooner if its credits run out. AWS then keeps the data for 90 days before deleting it. **Upgrade to a paid plan before that date**, or the history is lost.
 
 ## Open questions
 

@@ -1,10 +1,10 @@
 # Stages 0 and 1: prove the stack, capture the feed
 
-Compute runs locally. Only storage is online, in S3. This stage uses no Glue, Athena, EMR or EC2.
+Compute runs on one Oracle Cloud Always Free VM. Storage is in S3. This stage uses no Glue, Athena, EMR or EC2.
 
 ## Stage 0: prove the stack
 
-**Goal:** local PySpark writes a small Delta table to S3 and reads it back.
+**Goal:** PySpark on the VM writes a small Delta table to S3 and reads it back.
 
 ### Versions
 
@@ -15,21 +15,36 @@ Compute runs locally. Only storage is online, in S3. This stage uses no Glue, At
 | Java / Python | 17 / 3.13 | Tested locally, from the current Airflow image |
 | S3 connector | `org.apache.hadoop:hadoop-aws:3.5.0` | Published and matches Spark's Hadoop 3.5.0. **Not tested against S3 yet.** |
 
+"Tested locally" means on a home machine. None of this has been run on the VM's Arm processor yet.
+
+### Setup (done by hand in Oracle Cloud)
+
+1. Check the home region and the free limits under Limits, Quotas and Usage. Free compute must be in the home region, which can't be changed.
+2. Create an Arm VM (`VM.Standard.A1.Flex`, 2 OCPUs, 12 GB RAM). If it fails with "out of host capacity", try another availability domain or retry later.
+3. Install Docker and clone the repo.
+4. From the VM, download the Ministry's feed once. Some Israeli government sites may block foreign IPs, so **if this fails, the VM can't do the capture**.
+
 ### Setup (done by hand in AWS)
 
 1. Create a budget alert.
-2. Create a bucket in `il-central-1`, with public access blocked and versioning on.
+2. Create a bucket in `eu-north-1`, with public access blocked and versioning on. Add a lifecycle rule that deletes incomplete multipart uploads after 7 days.
 3. Create an access key that can only touch this bucket. It needs `s3:ListBucket` as well as read, write and delete on objects. Without `ListBucket`, S3 answers 403 instead of 404 for a missing zip, and capture would fail.
-4. Add `GTFS_BUCKET`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` to `.env`, which git ignores.
+4. Add `GTFS_BUCKET`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` to `.env` on the VM, which git ignores.
 
 ### Steps
 
 1. Pin `pyspark==4.2.0` and add `delta-spark==4.4.1`.
-2. Add a Spark session helper in `src/transit/` with the Delta and S3 settings.
-3. Write a small test table partitioned by `service_date` to `s3a://<bucket>/spike/`, overwrite one partition, and read it back.
-4. Delete the test data.
+2. Switch `docker-compose.yaml` from CeleryExecutor to LocalExecutor, dropping Redis and the worker, to leave memory for Spark.
+3. Add a Spark session helper in `src/transit/` with the Delta and S3 settings.
+4. Build the image on the VM and start the stack.
+5. Write a small test table partitioned by `service_date` to `s3a://<bucket>/spike/`, overwrite one partition, and read it back.
+6. Delete the test data.
 
-**Done when:** the read returns the expected rows from S3, including after the single-partition overwrite.
+**Done when:** on the VM, the read returns the expected rows from S3, including after the single-partition overwrite.
+
+### Staying on the free tier
+
+Oracle may reclaim an Always Free instance if CPU, network and memory all stay below 20% over 7 days (95th percentile for CPU). A daily batch will sit below that on CPU and network, so check that memory stays above about 2.4 GB once the stack is running.
 
 ## Stage 1: landing
 
@@ -44,7 +59,7 @@ Compute runs locally. Only storage is online, in S3. This stage uses no Glue, At
 3. **Download** to a temporary local file.
 4. **Valid zip:** the file is a zip and its contents pass a CRC check.
 5. **Complete:** `agency`, `calendar`, `routes`, `stops`, `stop_times` and `trips` are all present.
-6. **Today's feed:** the earliest `start_date` in `calendar.txt` equals the service date. This held for both feeds checked so far, so confirm it on more feeds before relying on it.
+6. **Today's feed:** the earliest `start_date` in `calendar.txt` equals the service date. This held for all three feeds checked so far (Oct 9, Nov 3, Nov 7), so confirm it on more feeds before relying on it.
 7. **Write once:** upload with an S3 conditional write (`If-None-Match: *`), so an existing zip can never be replaced.
 
 If a check fails, retry until the end of the day, then record the day as missed.
@@ -59,7 +74,7 @@ If a check fails, retry until the end of the day, then record the day as missed.
 
 The real zips in `data/` can be used to confirm the checks by hand. They are too large to commit, so tests should build small zips.
 
-**Done when:** the tests pass and one real feed is in S3 with a second capture refused.
+**Done when:** the tests pass and, running on the VM, one real feed is in S3 with a second capture refused.
 
 ## Not in these stages
 
