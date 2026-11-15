@@ -39,7 +39,7 @@ flowchart TD
 
     subgraph S3["Amazon S3 - Delta Lake"]
         LAND["Landing<br/>original zip, kept forever"]
-        BRONZE["Bronze<br/>raw feed tables, kept 30 days"]
+        BRONZE["Bronze<br/>raw feed tables, kept 7 days"]
         SILVER["Silver<br/>cleaned, typed, buses only<br/>latest feed"]
         subgraph GOLD["Gold - star schema, kept forever"]
             FACT["fct_planned_stop_visit<br/>+1 new day appended"]
@@ -65,7 +65,7 @@ flowchart TD
 | Table | Each day… | Over time |
 |---|---|---|
 | Landing zip | one new zip is added and never replaced | a complete archive of every captured day |
-| Bronze | a new feed partition is added, partitions older than 30 days are removed | a short buffer for debugging |
+| Bronze | a new feed partition is added, partitions older than 7 days are removed | a short buffer for debugging |
 | Silver | replaced by the newest feed | always "the current schedule" |
 | `fct_planned_stop_visit` | **one new partition is appended** for today's service date (~4.4M bus stop visits on a weekday) | the full history of what was planned, one partition per day |
 | `dim_route`, `dim_stop` | only **changes** are written: a route that changed operator, a stop that moved. The old version is closed and a new one opened. | a history of how the network changed. Each fact points to the version valid on its day. |
@@ -113,7 +113,7 @@ Because a missed day can never be recovered from the Ministry, the design leans 
 
 ## Open questions
 
-- **Rebuilding from a stored zip:** whether a day may be rebuilt from its own captured zip, for example after a bug in the build. Still to be decided.
+- **Rebuilding from a stored zip:** decided on 2026-11-15. A day may be rebuilt from its own captured zip, for example after a bug in the build. Bronze is therefore a rebuildable cache. See [`stage-2-bronze.md`](stage-2-bronze.md).
 - **Real-time source:** most likely a daily batch pull of archived real-time data (Hasadna's Open Bus project). Still to be verified.
 
 See [`schema.md`](schema.md) for the vocabulary (line, route, trip, stop, station) and the full star schema.
