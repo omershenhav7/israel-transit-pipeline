@@ -120,4 +120,4 @@ See [`schema.md`](schema.md) for the vocabulary (line, route, trip, stop, statio
 
 ## Current state
 
-The pipeline is not in operation yet, so no history is being collected. `gtfs_capture` is written and has only been tested against a fake S3 server. See [`stage-0-1.md`](stage-0-1.md) for the first build steps.
+Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Nothing builds tables from the zips yet: bronze, silver, gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1.
