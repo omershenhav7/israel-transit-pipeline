@@ -116,12 +116,34 @@ Run against small zips and local Delta tables, like the stage 1 tests:
 
 **Done when:** the tests pass and, on the VM, `gtfs_build` loads all six tables for a real day, with row counts matching the files, and a second run leaves the counts unchanged.
 
+**Status: done** on 2026-11-15, on the VM:
+
+- 51 tests pass in the image, in about 5 minutes. They run on the VM, since the development machine has no Java.
+- The six expected column lists matched the 2026-11-15 feed exactly.
+- `gtfs_build` for 2026-11-15 succeeded. The six tasks ran one at a time, in about 15 minutes in all, at 2–3 minutes per table. Rows written, each equal to the file's data lines counted separately from the zip:
+
+  | Table | Rows |
+  |---|---|
+  | `agency` | 36 |
+  | `calendar` | 26,761 |
+  | `routes` | 7,669 |
+  | `stops` | 35,402 |
+  | `stop_times` | 8,005,802 |
+  | `trips` | 214,625 |
+
+- A second run for the same day also succeeded, with the same six counts. Each task re-counts the day's rows after writing, so a duplicated day would have failed it.
+- Memory: at least 5.5 GB stayed available on the VM throughout, with the lowest point during `stop_times`.
+- Logs: about 120 lines (52 KB) per task. Before shuffle partitions were lowered to 4 and Spark logging set to WARN, a 36-row test load wrote about 70,000 lines.
+- Most of each task's time is fixed overhead: starting Spark, downloading the whole zip, and the retention step with `VACUUM`. If the run time ever matters, running `VACUUM` weekly instead of daily is the easiest saving.
+- Empty fields are stored as null, which is Spark's default. GTFS doesn't distinguish an empty field from a missing one.
+
 ## Not in this stage
 
 Silver, gold, the quality gate, alerts, and the other four files in the zip.
 
-## Left to the builder
+## How the open details were settled
 
-- How `gtfs_build` gets the `feed_date` from the Asset event, and how a manual run passes one.
-- Where the `spark-submit` command finds the job script and the Spark settings already in `get_spark` (Delta, S3, the Ivy cache, the AWS SDK on the driver classpath).
-- How the `spark` pool is created.
+- **`feed_date`:** a first task, `feed_date`, reads it from `triggering_asset_events[GTFS_LANDING]` (each event's `extra`), or from the run's `feed_date` param, which wins. Several events naming different days fail the run. A manual rebuild is `airflow dags trigger gtfs_build --conf '{"feed_date": "YYYY-MM-DD"}'`.
+- **The `spark-submit` command:** `spark_submit_command` in `src/transit/spark.py` builds it. JVM settings made in Python are ignored under `spark-submit`, so it passes driver memory, the Delta and `hadoop-aws` packages, the Ivy cache and the AWS SDK bundle (on `--driver-class-path`, excluded as a package) on the command line. SQL settings still come from `get_spark`. The job script is `/opt/airflow/src/transit/jobs/bronze.py`.
+- **The `spark` pool:** `airflow-init` runs `airflow pools set spark 1 ...` and fails if it can't, so the stack never starts without the pool.
+- **Timeouts and retries:** each bronze task has two retries 10 minutes apart and a 1-hour timeout. The `feed_date` task isn't retried, since a bad date won't fix itself.

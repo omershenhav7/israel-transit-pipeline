@@ -120,4 +120,4 @@ See [`schema.md`](schema.md) for the vocabulary (line, route, trip, stop, statio
 
 ## Current state
 
-Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Nothing builds tables from the zips yet: bronze, silver, gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1.
+Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Bronze is built too: each new zip triggers `gtfs_build`, which loads its six schedule files into raw Delta tables. Silver, gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1, and [`stage-2-bronze.md`](stage-2-bronze.md) for bronze.
