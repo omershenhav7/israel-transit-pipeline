@@ -1,8 +1,14 @@
 """Bronze layer: raw, all-text Delta tables, one per GTFS feed file."""
 
+import tempfile
 import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from botocore.exceptions import ClientError
+
+from transit.landing import zip_key
 
 TABLES: dict[str, tuple[str, ...]] = {
     "agency": (
@@ -140,3 +146,41 @@ def cleanup(spark, table_path: str, today: date, keep_date: date) -> list[date]:
         table.delete(condition)
     table.vacuum()
     return deleted
+
+
+def build_bronze_table(
+    spark,
+    s3,
+    bucket: str,
+    table: str,
+    feed_date: date,
+    today: date,
+    table_path: str | None = None,
+) -> int:
+    """Load one table for one day from the landing zip, then apply retention.
+
+    Returns the rows written. Any failure raises, naming the table and day.
+    """
+    from transit.spark import lakehouse_path  # imported here: spark.py needs pyspark and delta
+
+    key = zip_key(feed_date)
+    table_path = table_path or lakehouse_path("bronze", table)
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = Path(tmp) / "gtfs.zip"
+        try:
+            s3.download_file(bucket, key, str(zip_path))
+        except ClientError as e:
+            if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                raise BronzeLoadError(f"no zip in landing for {feed_date}") from e
+            raise
+        try:
+            csv_path = extract_table(zip_path, table, Path(tmp))
+            check_header(csv_path, table)
+            written = load_table(
+                spark, csv_path, table, feed_date, key, table_path,
+                datetime.now(ZoneInfo("Asia/Jerusalem")),
+            )
+            cleanup(spark, table_path, today, feed_date)
+        except Exception as e:
+            raise BronzeLoadError(f"bronze {table} {feed_date}: {e}") from e
+    return written
