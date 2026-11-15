@@ -61,6 +61,11 @@ def check_header(csv_path: Path, table: str) -> None:
         raise BronzeLoadError(
             f"{table}.txt header differs: missing {missing}, extra {extra}"
         )
+    if actual != expected:
+        raise BronzeLoadError(
+            f"{table}.txt columns are reordered or duplicated: "
+            f"got {actual}, expected {expected}"
+        )
 
 
 def count_rows(csv_path: Path) -> int:

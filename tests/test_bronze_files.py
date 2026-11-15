@@ -51,3 +51,19 @@ def test_count_rows_ignores_header_and_blank_lines(tmp_path):
     text = feed_text("stops", [STOP_ROW, STOP_ROW, STOP_ROW]) + "\r\n"
     p.write_bytes(text.encode("utf-8"))
     assert count_rows(p) == 3
+
+
+def test_reordered_columns_fail(tmp_path):
+    p = tmp_path / "stops.txt"
+    text = feed_text("stops", [STOP_ROW]).replace("stop_lat,stop_lon", "stop_lon,stop_lat", 1)
+    p.write_bytes(text.encode("utf-8"))
+    with pytest.raises(BronzeLoadError, match="reordered"):
+        check_header(p, "stops")
+
+
+def test_duplicate_column_fails(tmp_path):
+    p = tmp_path / "stops.txt"
+    text = feed_text("stops", [STOP_ROW]).replace("zone_id", "zone_id,zone_id", 1)
+    p.write_bytes(text.encode("utf-8"))
+    with pytest.raises(BronzeLoadError, match="duplicated"):
+        check_header(p, "stops")
