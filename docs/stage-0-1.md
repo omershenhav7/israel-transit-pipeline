@@ -91,7 +91,9 @@ The real zips in `data/` can be used to confirm the checks by hand. They are too
 - `capture_feed` stored `landing/gtfs/feed_date=2026-11-09/gtfs.zip` (146 MB) in about 12 seconds, including the download, the checks and the upload.
 - A second run skipped with "2026-11-09 is already captured", and the zip's ETag and timestamp were unchanged.
 
-To run it by hand, use `airflow tasks test gtfs_capture capture_feed <logical date>`. Don't use `airflow dags test` while `start_date` is still in the future: Airflow creates no task instances before a task's start date, so the run is marked successful without doing anything.
+**Live** since 2026-11-15. `start_date` is set to that day and the DAG is unpaused on the VM. The first scheduled run stored `feed_date=2026-11-15` (129 MB), and `record_missed` was skipped. There's no alert yet, so a missed day only shows up in Airflow and in the missed-day record.
+
+To run it by hand, use `airflow tasks test gtfs_capture capture_feed <logical date>`. Don't use `airflow dags test` for a date before `start_date`: Airflow creates no task instances before a task's start date, so the run is marked successful without doing anything.
 
 ## Not in these stages
 

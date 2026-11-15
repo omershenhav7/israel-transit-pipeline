@@ -22,8 +22,8 @@ def _service_date() -> date:
 
 @dag(
     schedule="0 4 * * *",
-    # Set to the launch day. Catchup records every day since then that has no zip as missed.
-    start_date=pendulum.datetime(2027, 1, 1, tz=LOCAL_TZ),
+    # The launch day. Catchup records every day since then that has no zip as missed.
+    start_date=pendulum.datetime(2026, 11, 15, tz=LOCAL_TZ),
     catchup=True,  # never backfills: a run for a past day fails without downloading and records the gap
     max_active_runs=1,
     # Hourly attempts from 04:00 to 23:00, the last chance to capture the day
