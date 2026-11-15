@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from transit.bronze import TABLES, resolve_feed_date
@@ -47,8 +49,10 @@ def test_dag_shape(tmp_path, monkeypatch):
     assert {"gtfs", "bronze"} <= set(dag.tags)
     bronze = {t.task_id: t for t in dag.tasks if t.task_id.startswith("bronze_")}
     assert set(bronze) == {f"bronze_{t}" for t in TABLES}
+    assert dag.get_task("feed_date").retries == 0
     for task in bronze.values():
         assert task.pool == "spark"
         assert task.retries == 2
+        assert task.execution_timeout == timedelta(hours=1)
         assert task.upstream_task_ids == {"feed_date"}
         assert task.downstream_task_ids == set()

@@ -18,7 +18,7 @@ def feed_text(table: str, rows: list[list[str]], bom: bool = True, crlf: bool = 
     """A feed file's text: expected header, then rows, no quoting."""
     eol = "\r\n" if crlf else "\n"
     lines = [",".join(TABLES[table])] + [",".join(r) for r in rows]
-    return ("﻿" if bom else "") + eol.join(lines) + eol
+    return ("\ufeff" if bom else "") + eol.join(lines) + eol
 
 
 @pytest.fixture(scope="session")

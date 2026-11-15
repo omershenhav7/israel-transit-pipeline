@@ -7,7 +7,6 @@ from airflow.sdk import Param, dag, task
 
 from transit.assets import GTFS_LANDING
 from transit.bronze import TABLES, resolve_feed_date
-from transit.spark import spark_submit_command
 
 LOCAL_TZ = "Asia/Jerusalem"
 JOB = "/opt/airflow/src/transit/jobs/bronze.py"
@@ -37,7 +36,7 @@ def _event_extras(triggering_asset_events) -> list[dict]:
     tags=["gtfs", "bronze"],
 )
 def gtfs_build():
-    @task
+    @task(retries=0)
     def feed_date(*, params, triggering_asset_events) -> str:
         return resolve_feed_date(_event_extras(triggering_asset_events), params.get("feed_date"))
 
@@ -45,8 +44,13 @@ def gtfs_build():
 
     for table in TABLES:
 
-        @task.bash(task_id=f"bronze_{table}", pool="spark", retries=2, retry_delay=timedelta(minutes=10))
+        @task.bash(
+            task_id=f"bronze_{table}", pool="spark", retries=2, retry_delay=timedelta(minutes=10),
+            execution_timeout=timedelta(hours=1),
+        )
         def build_table(day: str, table: str = table) -> str:
+            from transit.spark import spark_submit_command  # not at parse time: it imports pyspark
+
             return shlex.join(spark_submit_command(JOB, "--table", table, "--feed-date", day))
 
         build_table(day)

@@ -184,7 +184,7 @@ def build_bronze_table(
     from transit.spark import lakehouse_path  # imported here: spark.py needs pyspark and delta
 
     key = zip_key(feed_date)
-    table_path = table_path or lakehouse_path("bronze", table)
+    table_path = table_path or lakehouse_path("bronze", table, bucket=bucket)
     with tempfile.TemporaryDirectory() as tmp:
         zip_path = Path(tmp) / "gtfs.zip"
         try:

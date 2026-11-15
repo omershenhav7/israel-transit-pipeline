@@ -94,13 +94,24 @@ def test_second_day_leaves_first_unchanged(spark, tmp_path):
 
 def test_long_row_fails(spark, tmp_path):
     bad = stop("1") + ["extra"]
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="MALFORMED"):
         load(spark, tmp_path, "stops", [stop("0"), bad])
     assert files_written(tmp_path, "stops") == []
 
 
 def test_short_row_fails(spark, tmp_path):
     bad = stop("1")[:-1]
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="MALFORMED"):
         load(spark, tmp_path, "stops", [stop("0"), bad])
     assert files_written(tmp_path, "stops") == []
+
+
+def test_failed_reload_keeps_existing_rows(spark, tmp_path):
+    load(spark, tmp_path, "stops", [stop("1"), stop("2")], DAY1, LOADED1)
+    bad = stop("3")[:-1]
+    with pytest.raises(Exception, match="MALFORMED"):
+        load(spark, tmp_path, "stops", [stop("1"), bad], DAY1, LOADED2)
+    day = read(spark, tmp_path, "stops").filter(f"feed_date = '{DAY1}'").collect()
+    assert sorted(r["stop_id"] for r in day) == ["1", "2"]
+    assert {r["_loaded_at"] for r in day} == {LOADED1}
+

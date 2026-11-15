@@ -9,7 +9,7 @@ from conftest import feed_text, make_zip
 
 from transit.bronze import BronzeLoadError, build_bronze_table
 from transit.jobs.bronze import main
-from transit.spark import HADOOP_AWS, spark_submit_command
+from transit.spark import DELTA_SPARK, HADOOP_AWS, spark_submit_command
 
 DAY = date(2026, 11, 15)
 BUCKET = "test-bucket"
@@ -103,7 +103,8 @@ def test_spark_submit_command_carries_jvm_settings(monkeypatch):
     assert cmd[cmd.index("--driver-class-path") + 1] == "/jars/bundle.jar"
     assert cmd[cmd.index("--exclude-packages") + 1] == "software.amazon.awssdk:bundle"
     packages = cmd[cmd.index("--packages") + 1]
-    assert "io.delta:delta-spark_4.2_2.13:4.4.1" in packages and HADOOP_AWS in packages
+    assert DELTA_SPARK in packages and HADOOP_AWS in packages
+    assert "spark.log.level=WARN" in cmd
     assert "spark.jars.ivy=/ivy" in cmd
     assert cmd[-3:] == ["/x/job.py", "--table", "agency"]
 
@@ -115,6 +116,14 @@ def test_spark_submit_command_without_optional_settings(monkeypatch):
     assert cmd[cmd.index("--driver-memory") + 1] == "4g"
     assert "--driver-class-path" not in cmd and "--exclude-packages" not in cmd
     assert not any("spark.jars.ivy" in c for c in cmd)
+
+
+def test_delta_spark_matches_installed_delta():
+    from delta import configure_spark_with_delta_pip
+    from pyspark.sql import SparkSession
+
+    builder = configure_spark_with_delta_pip(SparkSession.builder)
+    assert DELTA_SPARK in builder._options["spark.jars.packages"]
 
 
 def test_job_rejects_unknown_table():

@@ -22,6 +22,8 @@ def get_spark(app_name: str = "transit") -> SparkSession:
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config("spark.hadoop.fs.s3a.endpoint.region", os.environ.get("AWS_DEFAULT_REGION", "eu-north-1"))
         .config("spark.sql.session.timeZone", "Asia/Jerusalem")
+        # One small VM: the default 200 shuffle partitions is meant for clusters
+        .config("spark.sql.shuffle.partitions", "4")
     )
     if os.environ.get("SPARK_IVY_DIR"):
         # Libraries baked into the image at build time (see Dockerfile)
@@ -49,6 +51,7 @@ def spark_submit_command(script: str, *args: str) -> list[str]:
         "spark-submit", "--master", "local[*]",
         "--driver-memory", os.environ.get("SPARK_DRIVER_MEMORY", "4g"),
         "--packages", f"{DELTA_SPARK},{HADOOP_AWS}",
+        "--conf", "spark.log.level=WARN",
     ]
     if os.environ.get("SPARK_IVY_DIR"):
         cmd += ["--conf", f"spark.jars.ivy={os.environ['SPARK_IVY_DIR']}"]

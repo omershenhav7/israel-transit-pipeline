@@ -72,7 +72,7 @@ It can also be run by hand, without Airflow, to rebuild or debug a day.
    | `stop_times` | `trip_id, arrival_time, departure_time, stop_id, stop_sequence, pickup_type, drop_off_type, shape_dist_traveled` |
    | `trips` | `route_id, service_id, trip_id, trip_headsign, direction_id, shape_id, wheelchair_accessible` |
 
-   Check these against a current feed before relying on them.
+   Check these against a current feed before relying on them. Changing `TABLES` later means deleting that bronze table and rebuilding it from landing, because the existing Delta table keeps the old columns.
 4. **Read with Spark** from the local file:
    - `header=true`, and every column read as string (no schema inference)
    - quote handling off (`quote` set to `\u0000`), so values with bare quotes like `קק"ל` stay as they are. Checked on the Oct 9 feed: no field in the six files starts with a quote. The only quotes are inside values, in 11,133 `trips` headsigns.
