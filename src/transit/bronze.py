@@ -44,6 +44,26 @@ class BronzeLoadError(Exception):
     """A bronze load cannot proceed: bad zip contents, header or counts."""
 
 
+def resolve_feed_date(events: list[dict], param: str | None) -> str:
+    """The one feed_date a build is for: the manual param, else the triggering events' `extra`.
+
+    Returns an ISO date. Raises ValueError for no date, several dates, or a malformed one.
+    """
+    if param:
+        dates = {param}
+    else:
+        dates = {e["feed_date"] for e in events if e and e.get("feed_date")}
+    if not dates:
+        raise ValueError("no feed_date: no triggering asset event names one and the param is empty")
+    if len(dates) > 1:
+        raise ValueError(f"triggering events name more than one feed_date: {sorted(dates)}")
+    (value,) = dates
+    try:
+        return date.fromisoformat(value).isoformat()
+    except (TypeError, ValueError):
+        raise ValueError(f"feed_date {value!r} is not an ISO date (YYYY-MM-DD)") from None
+
+
 def extract_table(zip_path: Path, table: str, dest_dir: Path) -> Path:
     """Unpack only `<table>.txt` from the zip into dest_dir."""
     name = f"{table}.txt"
