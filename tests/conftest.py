@@ -26,5 +26,8 @@ def spark():
     from transit.spark import get_spark
 
     session = get_spark("tests")
+    # Tiny test tables: one partition is plenty. Production keeps the defaults.
+    session.conf.set("spark.sql.shuffle.partitions", "1")
+    session.conf.set("spark.databricks.delta.snapshotPartitions", "1")
     yield session
     session.stop()
