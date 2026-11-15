@@ -1,6 +1,7 @@
 """Bronze layer: raw, all-text Delta tables, one per GTFS feed file."""
 
 import zipfile
+from datetime import date, datetime
 from pathlib import Path
 
 TABLES: dict[str, tuple[str, ...]] = {
@@ -73,3 +74,50 @@ def count_rows(csv_path: Path) -> int:
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
         lines = sum(1 for line in f if line.strip("\r\n"))
     return max(lines - 1, 0)
+
+
+def load_table(
+    spark,
+    csv_path: Path,
+    table: str,
+    feed_date: date,
+    source_key: str,
+    table_path: str,
+    loaded_at: datetime,
+) -> int:
+    """Write one feed file into its bronze Delta table as raw text.
+
+    Replaces only this feed_date's partition. Returns the rows written.
+    """
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import StringType, StructField, StructType
+
+    schema = StructType([StructField(c, StringType(), True) for c in TABLES[table]])
+    df = (
+        spark.read.schema(schema)
+        .option("header", "true")
+        .option("enforceSchema", "true")
+        .option("quote", "\u0000")
+        .option("mode", "FAILFAST")
+        .csv(str(csv_path))
+        .withColumn("feed_date", F.lit(feed_date.isoformat()).cast("date"))
+        .withColumn("_source_file", F.lit(source_key))
+        .withColumn("_loaded_at", F.lit(loaded_at).cast("timestamp"))
+    )
+    iso = feed_date.isoformat()
+    (
+        df.write.format("delta")
+        .mode("overwrite")
+        .partitionBy("feed_date")
+        .option("replaceWhere", f"feed_date = '{iso}'")
+        .save(table_path)
+    )
+    written = (
+        spark.read.format("delta").load(table_path).filter(f"feed_date = '{iso}'").count()
+    )
+    expected = count_rows(csv_path)
+    if written != expected:
+        raise BronzeLoadError(
+            f"{table}: wrote {written} rows for {iso} but the file has {expected}"
+        )
+    return written
