@@ -6,6 +6,8 @@ from pyspark.sql import SparkSession
 
 # Must match the Hadoop version bundled with pyspark 4.2.0
 HADOOP_AWS = "org.apache.hadoop:hadoop-aws:3.5.0"
+# The coordinate configure_spark_with_delta_pip picks for the installed delta-spark
+DELTA_SPARK = "io.delta:delta-spark_4.2_2.13:4.4.1"
 AWS_SDK_BUNDLE = "software.amazon.awssdk:bundle"
 
 
@@ -20,6 +22,8 @@ def get_spark(app_name: str = "transit") -> SparkSession:
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
         .config("spark.hadoop.fs.s3a.endpoint.region", os.environ.get("AWS_DEFAULT_REGION", "eu-north-1"))
         .config("spark.sql.session.timeZone", "Asia/Jerusalem")
+        # One small VM: the default 200 shuffle partitions is meant for clusters
+        .config("spark.sql.shuffle.partitions", "4")
     )
     if os.environ.get("SPARK_IVY_DIR"):
         # Libraries baked into the image at build time (see Dockerfile)
@@ -38,3 +42,19 @@ def lakehouse_path(*parts: str, bucket: str | None = None) -> str:
     """s3a:// path inside the project bucket, e.g. lakehouse_path("silver", "trips")."""
     bucket = bucket or os.environ["GTFS_BUCKET"]
     return "/".join([f"s3a://{bucket}", *parts])
+
+
+def spark_submit_command(script: str, *args: str) -> list[str]:
+    """The spark-submit command for a job script. get_spark's JVM settings are ignored under
+    spark-submit (the JVM is already running), so they are passed here as flags instead."""
+    cmd = [
+        "spark-submit", "--master", "local[*]",
+        "--driver-memory", os.environ.get("SPARK_DRIVER_MEMORY", "4g"),
+        "--packages", f"{DELTA_SPARK},{HADOOP_AWS}",
+        "--conf", "spark.log.level=WARN",
+    ]
+    if os.environ.get("SPARK_IVY_DIR"):
+        cmd += ["--conf", f"spark.jars.ivy={os.environ['SPARK_IVY_DIR']}"]
+    if os.environ.get("AWS_SDK_BUNDLE"):
+        cmd += ["--exclude-packages", AWS_SDK_BUNDLE, "--driver-class-path", os.environ["AWS_SDK_BUNDLE"]]
+    return [*cmd, script, *args]

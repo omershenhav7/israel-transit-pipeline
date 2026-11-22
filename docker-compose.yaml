@@ -244,6 +244,10 @@ services:
         echo "Airflow version:"
         /entrypoint airflow version
         echo
+        echo "Setting the spark pool (one Spark job at a time):"
+        # This script has no set -e. Without the pool every bronze task waits forever, so fail init here.
+        /entrypoint airflow pools set spark 1 "One Spark job at a time on the VM" || exit 1
+        echo
         echo "Files in shared volumes:"
         echo
         ls -la /opt/airflow/{logs,dags,plugins,config}
