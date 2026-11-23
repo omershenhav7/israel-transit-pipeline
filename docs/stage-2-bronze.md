@@ -7,7 +7,7 @@ Bronze is the first part of `gtfs_build`. Silver, gold, the quality gate and ale
 ## What bronze is
 
 - **A rebuildable 7-day cache.** Any day still in landing can be loaded again from its own zip, for example after a bug. Landing keeps every zip forever, so dropping bronze after 7 days loses nothing.
-- **Raw.** Every column is text and keeps its original GTFS name. Bronze does no typing, renaming, filtering or joining. All of that is silver's job. A bad value then fails in silver, where it can be fixed and the day rebuilt.
+- **Raw.** Every column is text and keeps its original GTFS name. Bronze does no typing, renaming, filtering or joining. Typing, renaming and filtering are silver's job, and joining is gold's. A bad value is then caught in silver, where it can be fixed and the day rebuilt (see [`stage-3-silver.md`](stage-3-silver.md)).
 - **Six files only:** `agency`, `calendar`, `routes`, `stops`, `stop_times`, `trips`. `shapes` (225 MB), `fare_rules`, `fare_attributes` and `translations` aren't used by gold, so they're left out. They can be added later from the zips.
 
 ## Approaches considered
@@ -96,7 +96,7 @@ New DAG `gtfs_build`, triggered by the `gtfs_landing` Asset event that `gtfs_cap
 
 - **Six tasks**, `bronze_agency`, `bronze_calendar`, `bronze_routes`, `bronze_stops`, `bronze_stop_times`, `bronze_trips`. Each is a `@task.bash` that runs the `spark-submit` command above with the run's `feed_date`.
 - **No order between them.** All six are in the `spark` pool (1 slot), so only one runs at a time.
-- **`build_silver`** (a later stage) will wait for all six.
+- **Silver** (stage 3) has one task per table. Each one waits only for the bronze tasks of the tables it reads (see [`stage-3-silver.md`](stage-3-silver.md)).
 - **The `spark` pool** is created with 1 slot. It's set up in code or at stack start-up, so a rebuilt VM gets it too.
 - **Rebuilding a day by hand:** trigger `gtfs_build` with a `feed_date`, or clear its tasks. A day older than 7 days can be loaded again the same way.
 
