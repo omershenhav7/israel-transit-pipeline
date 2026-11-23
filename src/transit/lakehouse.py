@@ -1,8 +1,18 @@
-"""Lakehouse helpers shared by the bronze and silver layers."""
+"""Lakehouse helpers shared by the bronze and silver layers. Imports no pyspark, so the DAG can use it."""
 
 from datetime import date, timedelta
 
 RETENTION_DAYS = 7
+
+# The bronze tables each silver job reads, its own table first.
+SOURCES: dict[str, tuple[str, ...]] = {
+    "routes": ("routes",),
+    "trips": ("trips", "routes"),
+    "stop_times": ("stop_times", "trips", "routes"),
+    "stops": ("stops", "stop_times", "trips", "routes"),
+    "operators": ("agency", "routes"),
+    "calendar": ("calendar", "trips", "routes"),
+}
 
 
 def table_path(root: str, layer: str, table: str) -> str:

@@ -24,6 +24,8 @@ def get_spark(app_name: str = "transit") -> SparkSession:
         .config("spark.sql.session.timeZone", "Asia/Jerusalem")
         # One small VM: the default 200 shuffle partitions is meant for clusters
         .config("spark.sql.shuffle.partitions", "4")
+        # Delta's VACUUM lists files with 10,000 tasks by default: about 40 s per call on this VM
+        .config("spark.sql.sources.parallelPartitionDiscovery.parallelism", "4")
     )
     if os.environ.get("SPARK_IVY_DIR"):
         # Libraries baked into the image at build time (see Dockerfile)

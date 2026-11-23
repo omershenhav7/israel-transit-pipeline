@@ -1,4 +1,4 @@
-"""Build the bronze tables from a landed GTFS zip: one spark-submit job per table, one at a time."""
+"""Build the bronze, then the silver, tables from a landed GTFS zip: one spark-submit job per table, one at a time."""
 import shlex
 from datetime import timedelta
 
@@ -7,9 +7,11 @@ from airflow.sdk import Param, dag, task
 
 from transit.assets import GTFS_LANDING
 from transit.bronze import TABLES, resolve_feed_date
+from transit.lakehouse import SOURCES  # not transit.silver: that imports pyspark
 
 LOCAL_TZ = "Asia/Jerusalem"
-JOB = "/opt/airflow/src/transit/jobs/bronze.py"
+BRONZE_JOB = "/opt/airflow/src/transit/jobs/bronze.py"
+SILVER_JOB = "/opt/airflow/src/transit/jobs/silver.py"
 
 
 def _event_extras(triggering_asset_events) -> list[dict]:
@@ -33,7 +35,7 @@ def _event_extras(triggering_asset_events) -> list[dict]:
         )
     },
     default_args={"retries": 2, "retry_delay": timedelta(minutes=10)},
-    tags=["gtfs", "bronze"],
+    tags=["gtfs", "bronze", "silver"],
 )
 def gtfs_build():
     @task(retries=0)
@@ -42,6 +44,7 @@ def gtfs_build():
 
     day = feed_date()
 
+    bronze = {}
     for table in TABLES:
 
         @task.bash(
@@ -51,9 +54,24 @@ def gtfs_build():
         def build_table(day: str, table: str = table) -> str:
             from transit.spark import spark_submit_command  # not at parse time: it imports pyspark
 
-            return shlex.join(spark_submit_command(JOB, "--table", table, "--feed-date", day))
+            return shlex.join(spark_submit_command(BRONZE_JOB, "--table", table, "--feed-date", day))
 
-        build_table(day)
+        bronze[table] = build_table(day)
+
+    for table, sources in SOURCES.items():
+
+        @task.bash(
+            task_id=f"silver_{table}", pool="spark", retries=2, retry_delay=timedelta(minutes=10),
+            execution_timeout=timedelta(hours=1),
+        )
+        def build_silver(day: str, table: str = table) -> str:
+            from transit.spark import spark_submit_command  # not at parse time: it imports pyspark
+
+            return shlex.join(spark_submit_command(SILVER_JOB, "--table", table, "--feed-date", day))
+
+        silver = build_silver(day)
+        for source in sources:
+            bronze[source] >> silver
 
 
 gtfs_build()

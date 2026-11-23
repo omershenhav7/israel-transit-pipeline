@@ -10,7 +10,7 @@ from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
 from transit.bronze import TABLES
-from transit.lakehouse import cleanup, table_path
+from transit.lakehouse import SOURCES, cleanup, table_path
 
 _TIME = r"^(\d{1,2}):([0-5]\d):([0-5]\d)$"
 _ROUTE_DESC = r"^(\d+)-([123])-(.+)$"
@@ -119,16 +119,6 @@ KEYS: dict[str, tuple[str, ...]] = {
     "stops": ("stop_id",),
     "operators": ("operator_id",),
     "calendar": ("service_id",),
-}
-
-# The bronze tables each silver job reads, its own table first.
-SOURCES: dict[str, tuple[str, ...]] = {
-    "routes": ("routes",),
-    "trips": ("trips", "routes"),
-    "stop_times": ("stop_times", "trips", "routes"),
-    "stops": ("stops", "stop_times", "trips", "routes"),
-    "operators": ("agency", "routes"),
-    "calendar": ("calendar", "trips", "routes"),
 }
 
 _DAYS = ("sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday")
