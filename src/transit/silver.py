@@ -3,10 +3,14 @@
 Spark 4 runs with ANSI mode on, so every cast here is guarded by a regex match or is a try_ cast.
 """
 
+from dataclasses import dataclass
+from datetime import date, datetime
+
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 
 from transit.bronze import TABLES
+from transit.lakehouse import cleanup, table_path
 
 _TIME = r"^(\d{1,2}):([0-5]\d):([0-5]\d)$"
 _ROUTE_DESC = r"^(\d+)-([123])-(.+)$"
@@ -347,3 +351,106 @@ def clean(table: str, df: DataFrame) -> DataFrame:
     copies = F.count(F.lit(1)).over(Window.partitionBy(*KEYS[table]))
     reason = F.coalesce(reason, F.when(copies > 1, F.lit("duplicate_key")))
     return typed.withColumn("_reason", reason).select(*SILVER_TABLES[table], "_reason", "_raw")
+
+
+# ---------------------------------------------------------------- building one table
+
+REJECT_LIMIT = 0.001  # rejected / bus rows above this fails the build
+REJECTS = "_rejects"
+
+
+class SilverBuildError(Exception):
+    """A silver build cannot proceed: missing bronze, too many rejects, or a count mismatch."""
+
+
+@dataclass(frozen=True)
+class SilverCounts:
+    kept: int
+    rejected: int
+    non_bus: int
+
+
+def _read_bronze(spark, root: str, feed_date: date, name: str) -> DataFrame:
+    """The bronze table's partition for the day; fails if the table or the day is missing."""
+    from delta.tables import DeltaTable
+
+    path = table_path(root, "bronze", name)
+    iso = feed_date.isoformat()
+    if not DeltaTable.isDeltaTable(spark, path):
+        raise SilverBuildError(f"bronze {name} does not exist at {path}, needed for {iso}")
+    df = spark.read.format("delta").load(path).filter(F.col("feed_date") == F.lit(feed_date))
+    if df.isEmpty():
+        raise SilverBuildError(f"bronze {name} has no rows for {iso}")
+    return df
+
+
+def _write_day(df: DataFrame, path: str, replace_where: str) -> None:
+    (
+        df.write.format("delta")
+        .mode("overwrite")
+        .partitionBy("feed_date")
+        .option("replaceWhere", replace_where)
+        .save(path)
+    )
+
+
+def build_silver_table(
+    spark, root: str, table: str, feed_date: date, today: date, loaded_at: datetime
+) -> SilverCounts:
+    """Build one silver table for one day from bronze, with its rejects, then apply retention.
+
+    Raises SilverBuildError when a bronze partition is missing (before writing anything), when
+    rejects exceed REJECT_LIMIT of the bus rows (after writing the rejects and deleting the
+    day's silver partition), or when the rows written differ from the rows kept.
+    """
+    from delta.tables import DeltaTable
+
+    iso = feed_date.isoformat()
+    bronze = {name: _read_bronze(spark, root, feed_date, name) for name in SOURCES[table]}
+    stamp = [
+        F.lit(feed_date).alias("feed_date"),
+        F.lit(loaded_at).cast("timestamp").alias("_loaded_at"),
+    ]
+    silver_path = table_path(root, "silver", table)
+    rejects_path = table_path(root, "silver", REJECTS)
+
+    rows = clean(table, bus_rows(table, bronze)).cache()
+    try:
+        rejected_rows = rows.filter(F.col("_reason").isNotNull())
+        kept = rows.filter(F.col("_reason").isNull()).count()
+        rejected = rejected_rows.count()
+        non_bus = bronze[SOURCES[table][0]].count() - kept - rejected
+
+        rejects = rejected_rows.select(
+            F.lit(table).alias("table"), F.col("_reason").alias("reason"),
+            F.col("_raw").alias("row"), *stamp,
+        )
+        _write_day(rejects, rejects_path, f"feed_date = '{iso}' AND `table` = '{table}'")
+
+        bus = kept + rejected
+        if bus and rejected / bus > REJECT_LIMIT:
+            if DeltaTable.isDeltaTable(spark, silver_path):
+                DeltaTable.forPath(spark, silver_path).delete(f"feed_date = '{iso}'")
+            top = (
+                rejected_rows.groupBy("_reason").count()
+                .orderBy(F.desc("count"), "_reason").limit(3).collect()
+            )
+            reasons = ", ".join(f"{r['_reason']} ({r['count']})" for r in top)
+            raise SilverBuildError(
+                f"silver {table} {iso}: {rejected} of {bus} bus rows rejected, over the "
+                f"{REJECT_LIMIT:.1%} limit (kept {kept}); most common reasons: {reasons}"
+            )
+
+        kept_rows = rows.filter(F.col("_reason").isNull()).select(*SILVER_TABLES[table], *stamp)
+        _write_day(kept_rows, silver_path, f"feed_date = '{iso}'")
+    finally:
+        rows.unpersist()
+
+    day = F.col("feed_date") == F.lit(feed_date)
+    written = spark.read.format("delta").load(silver_path).filter(day).count()
+    if written != kept:
+        raise SilverBuildError(f"silver {table}: wrote {written} rows for {iso} but kept {kept}")
+
+    cleanup(spark, silver_path, today, feed_date)
+    cleanup(spark, rejects_path, today, feed_date)
+    return SilverCounts(kept=kept, rejected=rejected, non_bus=non_bus)

@@ -29,5 +29,7 @@ def spark():
     # Tiny test tables: one partition is plenty. Production keeps the defaults.
     session.conf.set("spark.sql.shuffle.partitions", "1")
     session.conf.set("spark.databricks.delta.snapshotPartitions", "1")
+    # VACUUM lists files with this many tasks (default 10,000): about 40 s per VACUUM here.
+    session.conf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "1")
     yield session
     session.stop()
