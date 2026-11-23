@@ -24,7 +24,7 @@ def test_route_desc_parts(spark):
         "35003-1-ב": ("35003", "1", "ב"),
         "10-3-#": ("10", "3", "#"),
     }
-    bad = ["11337-4-0", "11337-1", "x-1-0"]
+    bad = ["11337-4-0", "11337-1", "x-1-0", None]
     df = one_col(spark, list(good) + bad)
     rows = df.select("v", route_desc_parts(F.col("v")).alias("p")).collect()
     got = {r.v: r.p for r in rows}
@@ -55,6 +55,8 @@ def test_long_name_cities(spark):
 
     assert long_parts(spark, text, "2", "0") is None
     assert long_parts(spark, "a-b<->c-d<->e-f-10", "1", "0") is None
+    assert long_parts(spark, "abc", "1", "0") is None
+    assert long_parts(spark, None, "1", "0") is None
 
 
 def test_stop_desc_parts(spark):

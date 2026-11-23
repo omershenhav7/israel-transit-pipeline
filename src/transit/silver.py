@@ -51,8 +51,8 @@ def long_name_parts(long_name: Column, direction: Column, variant: Column) -> Co
     Null unless there is exactly one '<->' and the right side ends with the suffix.
     """
     sides = F.split(long_name, "<->", -1)
-    left = sides.getItem(0)
-    right = sides.getItem(1)
+    left = F.try_element_at(sides, F.lit(1))
+    right = F.try_element_at(sides, F.lit(2))
     suffix = F.concat(F.lit("-"), direction, variant)
     right = F.substring(right, 1, F.length(right) - F.length(suffix))
     origin_name, origin_city = _name_city(left)
@@ -63,7 +63,7 @@ def long_name_parts(long_name: Column, direction: Column, variant: Column) -> Co
         dest_name.alias("destination_name"),
         dest_city.alias("destination_city"),
     )
-    ok = (F.size(sides) == 2) & sides.getItem(1).endswith(suffix)
+    ok = (F.size(sides) == 2) & F.try_element_at(sides, F.lit(2)).endswith(suffix)
     return F.when(ok, parts)
 
 
