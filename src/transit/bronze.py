@@ -2,12 +2,13 @@
 
 import tempfile
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from botocore.exceptions import ClientError
 
+from transit.lakehouse import RETENTION_DAYS, cleanup  # noqa: F401  (re-exported; tests import them from here)
 from transit.landing import zip_key
 
 TABLES: dict[str, tuple[str, ...]] = {
@@ -36,9 +37,6 @@ TABLES: dict[str, tuple[str, ...]] = {
         "direction_id", "shape_id", "wheelchair_accessible",
     ),
 }
-
-RETENTION_DAYS = 7
-
 
 class BronzeLoadError(Exception):
     """A bronze load cannot proceed: bad zip contents, header or counts."""
@@ -147,25 +145,6 @@ def load_table(
             f"{table}: wrote {written} rows for {iso} but the file has {expected}"
         )
     return written
-
-
-def cleanup(spark, table_path: str, today: date, keep_date: date) -> list[date]:
-    """Delete partitions older than the retention window, then VACUUM.
-
-    Removes feed_date < today - RETENTION_DAYS, except keep_date (the day
-    just loaded). Returns the deleted dates, oldest first.
-    """
-    from delta.tables import DeltaTable
-
-    cutoff = (today - timedelta(days=RETENTION_DAYS)).isoformat()
-    condition = f"feed_date < '{cutoff}' AND feed_date != '{keep_date.isoformat()}'"
-    table = DeltaTable.forPath(spark, table_path)
-    rows = table.toDF().filter(condition).select("feed_date").distinct().collect()
-    deleted = sorted(r["feed_date"] for r in rows)
-    if deleted:
-        table.delete(condition)
-    table.vacuum()
-    return deleted
 
 
 def build_bronze_table(
