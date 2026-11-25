@@ -40,7 +40,7 @@ flowchart TD
     subgraph S3["Amazon S3 - Delta Lake"]
         LAND["Landing<br/>original zip, kept forever"]
         BRONZE["Bronze<br/>raw feed tables, kept 7 days"]
-        SILVER["Silver<br/>cleaned, typed, buses only<br/>latest feed"]
+        SILVER["Silver<br/>cleaned, typed, buses only<br/>kept 7 days"]
         subgraph GOLD["Gold - star schema, kept forever"]
             FACT["fct_planned_stop_visit<br/>+1 new day appended"]
             DROUTE["dim_route<br/>changed routes get a new version"]
@@ -66,7 +66,7 @@ flowchart TD
 |---|---|---|
 | Landing zip | one new zip is added and never replaced | a complete archive of every captured day |
 | Bronze | a new feed partition is added, partitions older than 7 days are removed | a short buffer for debugging |
-| Silver | replaced by the newest feed | always "the current schedule" |
+| Silver | a new feed partition is added, partitions older than 7 days are removed | a rebuildable buffer: each day's feed cleaned, typed and filtered to buses, so any recent day can be rebuilt from its own data |
 | `fct_planned_stop_visit` | **one new partition is appended** for today's service date (~4.4M bus stop visits on a weekday) | the full history of what was planned, one partition per day |
 | `dim_route`, `dim_stop` | only **changes** are written: a route that changed operator, a stop that moved. The old version is closed and a new one opened. | a history of how the network changed. Each fact points to the version valid on its day. |
 | `dim_date` | extended ahead as needed | calendar with Israeli holidays |
@@ -97,7 +97,7 @@ flowchart LR
     FEED -->|"new zip stored:<br/>gtfs_landing Asset event with feed_date"| B1
 ```
 
-`gtfs_capture` is plain Python. Each `gtfs_build` step will run as its own `spark-submit` on the VM. `gtfs_build` is not built yet.
+`gtfs_capture` is plain Python. `gtfs_build` is built as far as silver. Each bronze and silver table is its own `spark-submit` on the VM; the steps after silver are not built yet.
 
 `gtfs_capture` uses `catchup=True`, but never to backfill: a run for a past day with no zip fails without downloading and records the day as missed. That way days when the machine was off are recorded too.
 
@@ -113,11 +113,11 @@ Because a missed day can never be recovered from the Ministry, the design leans 
 
 ## Open questions
 
-- **Rebuilding from a stored zip:** decided on 2026-11-15. A day may be rebuilt from its own captured zip, for example after a bug in the build. Bronze is therefore a rebuildable cache. See [`stage-2-bronze.md`](stage-2-bronze.md).
+- **Rebuilding from a stored zip:** decided on 2026-11-15. A day may be rebuilt from its own captured zip, for example after a bug in the build. Bronze is therefore a rebuildable cache. See [`stage-2-bronze.md`](stage-2-bronze.md). Silver follows the same rule: it is kept per feed day for 7 days instead of holding only the latest feed, so a rebuilt day never reads another day's data. See [`stage-3-silver.md`](stage-3-silver.md).
 - **Real-time source:** most likely a daily batch pull of archived real-time data (Hasadna's Open Bus project). Still to be verified.
 
 See [`schema.md`](schema.md) for the vocabulary (line, route, trip, stop, station) and the full star schema.
 
 ## Current state
 
-Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Bronze is built too: each new zip triggers `gtfs_build`, which loads its six schedule files into raw Delta tables. Silver, gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1, and [`stage-2-bronze.md`](stage-2-bronze.md) for bronze.
+Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Bronze is built too: each new zip triggers `gtfs_build`, which loads its six schedule files into raw Delta tables. Silver is built, and runs after bronze in `gtfs_build`: six cleaned, typed, bus-only Delta tables. It was deployed on the VM on 2026-11-25. Gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1, [`stage-2-bronze.md`](stage-2-bronze.md) for bronze, and [`stage-3-silver.md`](stage-3-silver.md) for silver.

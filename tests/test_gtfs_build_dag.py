@@ -3,6 +3,7 @@ from datetime import timedelta
 import pytest
 
 from transit.bronze import TABLES, resolve_feed_date
+from transit.lakehouse import SOURCES
 
 
 def test_resolve_feed_date_from_event():
@@ -46,7 +47,7 @@ def test_dag_shape(tmp_path, monkeypatch):
     dag = bag.dags["gtfs_build"]
     assert dag.max_active_runs == 1
     assert dag.catchup is False
-    assert {"gtfs", "bronze"} <= set(dag.tags)
+    assert {"gtfs", "bronze", "silver"} <= set(dag.tags)
     bronze = {t.task_id: t for t in dag.tasks if t.task_id.startswith("bronze_")}
     assert set(bronze) == {f"bronze_{t}" for t in TABLES}
     assert dag.get_task("feed_date").retries == 0
@@ -55,4 +56,12 @@ def test_dag_shape(tmp_path, monkeypatch):
         assert task.retries == 2
         assert task.execution_timeout == timedelta(hours=1)
         assert task.upstream_task_ids == {"feed_date"}
+        assert all(d.startswith("silver_") for d in task.downstream_task_ids)
+    silver = {t.task_id: t for t in dag.tasks if t.task_id.startswith("silver_")}
+    assert set(silver) == {f"silver_{t}" for t in SOURCES}
+    for name, task in silver.items():
+        assert task.pool == "spark"
+        assert task.retries == 2
+        assert task.execution_timeout == timedelta(hours=1)
+        assert task.upstream_task_ids == {"feed_date"} | {f"bronze_{s}" for s in SOURCES[name.removeprefix("silver_")]}
         assert task.downstream_task_ids == set()
