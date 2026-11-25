@@ -10,4 +10,4 @@ The Ministry of Transport's GTFS feed only covers today onward, so the pipeline 
 - [Architecture](docs/architecture.md): how the schedule history is built and protected
 - [Schema](docs/schema.md): vocabulary (line, route, trip, stop, station) and the star schema
 
-**Status:** in development, not in operation yet. The first DAG, `gtfs_capture`, is written. See [Stages 0 and 1](docs/stage-0-1.md).
+**Status:** in development. The daily capture has run on the VM since 2026-11-15, and each captured feed is built into bronze and silver Delta tables. Gold and the quality gate are not built yet. See [stages 0 and 1](docs/stage-0-1.md), [bronze](docs/stage-2-bronze.md) and [silver](docs/stage-3-silver.md).

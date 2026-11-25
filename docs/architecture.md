@@ -97,7 +97,7 @@ flowchart LR
     FEED -->|"new zip stored:<br/>gtfs_landing Asset event with feed_date"| B1
 ```
 
-`gtfs_capture` is plain Python. Each `gtfs_build` step will run as its own `spark-submit` on the VM. `gtfs_build` is not built yet.
+`gtfs_capture` is plain Python. `gtfs_build` is built as far as silver. Each bronze and silver table is its own `spark-submit` on the VM; the steps after silver are not built yet.
 
 `gtfs_capture` uses `catchup=True`, but never to backfill: a run for a past day with no zip fails without downloading and records the day as missed. That way days when the machine was off are recorded too.
 
@@ -120,4 +120,4 @@ See [`schema.md`](schema.md) for the vocabulary (line, route, trip, stop, statio
 
 ## Current state
 
-Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Bronze is built too: each new zip triggers `gtfs_build`, which loads its six schedule files into raw Delta tables. Silver is designed but not built yet. Gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1, [`stage-2-bronze.md`](stage-2-bronze.md) for bronze, and [`stage-3-silver.md`](stage-3-silver.md) for silver.
+Daily capture has been live on the VM since 2026-11-15, so each day's zip is collected in landing from that date. Bronze is built too: each new zip triggers `gtfs_build`, which loads its six schedule files into raw Delta tables. Silver is built, and runs after bronze in `gtfs_build`: six cleaned, typed, bus-only Delta tables. It was deployed on the VM on 2026-11-25. Gold, the quality gate and alerts are still to come. See [`stage-0-1.md`](stage-0-1.md) for stages 0 and 1, [`stage-2-bronze.md`](stage-2-bronze.md) for bronze, and [`stage-3-silver.md`](stage-3-silver.md) for silver.

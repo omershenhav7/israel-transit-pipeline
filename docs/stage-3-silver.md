@@ -23,8 +23,8 @@ How silver is split into tables:
 
 | Approach | Trade-off |
 |---|---|
-| **A. One silver table per bronze table (chosen)** | Same pattern as bronze: each table is visible and retried on its own, and silver stays "clean data", not half of gold. Costs six more Spark start-ups, about 15 more minutes a day. |
-| B. Three tables shaped for gold (`routes` + operator, `stops` + station, `stop_visits` = stop times + trips + calendar) | Fewer tasks and a thinner gold, but silver does gold's modelling, and the 7M-row join can't be retried in parts. |
+| **A. One silver table per bronze table (chosen)** | Same pattern as bronze: each table is visible and retried on its own, and silver stays "clean data", not half of gold. Costs six more Spark start-ups, and about 20 more minutes a day for silver in all. |
+| B. Three tables shaped for gold (`routes` + operator, `stops` + station, `stop_visits` = stop times + trips + calendar) | Fewer tasks and a thinner gold, but silver does gold's modelling, and the join of about 12.5M bus stop times can't be retried in parts. |
 | C. One job builds all of silver | Fastest, but one failure redoes everything and Airflow shows a single box. Already rejected for bronze. |
 
 What to do with an unusable value:
@@ -47,7 +47,7 @@ How bus-only is applied:
 | Option | Trade-off |
 |---|---|
 | **All six tables bus-only, decided from bronze relations (chosen)** | Silver is bus-only, as wanted. Relations are used for this filter only. |
-| Only `routes` filtered; gold drops the rest by joining | Silver would know nothing about relations, but would keep about 0.3M non-bus stop times a day and stop being bus-only. |
+| Only `routes` filtered; gold drops the rest by joining | Silver would know nothing about relations, but would keep about 0.1M non-bus stop times a day (113,788 on 2026-11-25) and stop being bus-only. |
 
 ## Layout
 
@@ -161,7 +161,7 @@ One table, `silver/_rejects`, partitioned by `feed_date`:
 | Column | Meaning |
 |---|---|
 | `table` | which silver table rejected the row |
-| `reason` | a short code, e.g. `bad_time`, `bad_route_desc`, `bad_coordinate`, `duplicate_key` |
+| `reason` | a short code, e.g. `bad_arrival_time`, `bad_route_desc`, `bad_stop_lat`, `duplicate_key` |
 | `row` | the bronze row as JSON, unchanged |
 | `feed_date`, `_loaded_at` | as in every silver table |
 
@@ -209,7 +209,7 @@ In `gtfs_build`:
 - **Dependencies:** each silver task waits for the bronze tasks of the tables it reads (table above). There are no silver-to-silver dependencies.
 - **Rebuilding a day** works as it does for bronze: trigger `gtfs_build` with a `feed_date`, or clear the silver tasks. A day older than 7 days needs its bronze rebuilt first, which a full `gtfs_build` run does anyway.
 
-Total build time grows from about 15 to about 30 minutes a day, mostly from Spark start-up.
+Total build time grows from 16–18 minutes a day to 33–35, measured on 2026-11-25.
 
 ## Tests (no network or AWS needed)
 
@@ -232,12 +232,32 @@ Against small local Delta tables, like the bronze tests:
 
 **Done when:** the tests pass on the VM, and `gtfs_build` for a real day builds all six silver tables with zero rejects (or a few, explained), kept + rejected equal to the bronze bus rows for each table, and the same counts on a second run.
 
+**Status: done** on 2026-11-25, deployed on the VM from branch `stage-3-silver`, not merged to `main` yet:
+
+- 77 tests pass in the image on the VM, in about 8.5 minutes.
+- `gtfs_build` for 2026-11-25 succeeded twice, with no retries and no two Spark tasks overlapping. Both runs logged the same counts. Kept + rejected equals the bronze bus rows, counted separately for each table with SQL written from "Which rows are buses":
+
+  | Table | Kept | Rejected | Non-bus | Bronze bus rows |
+  |---|---|---|---|---|
+  | `routes` | 6,603 | 0 | 1,584 | 6,603 |
+  | `trips` | 326,709 | 0 | 8,313 | 326,709 |
+  | `stop_times` | 12,491,639 | 0 | 113,788 | 12,491,639 |
+  | `stops` | 30,649 | 0 | 4,746 | 30,649 |
+  | `operators` | 29 | 0 | 7 | 29 |
+  | `calendar` | 31,780 | 0 | 5,507 | 31,780 |
+
+- After the second run, each silver table holds exactly the kept rows for the day, all with one `_loaded_at` inside that run, so it replaced the first run's rows. There are no duplicate keys and no nulls in required columns. `_rejects` is empty.
+- Run times: 33 minutes (17:35–18:08 UTC) and 35 minutes (18:08–18:43 UTC). In each run the bronze tasks took about 13 minutes and the silver tasks about 20 and 22. `silver_stop_times` was the longest, at 6.2 and 6.6 minutes. The three bronze-only runs before this took 16–18 minutes.
+- Memory, sampled every 3 seconds: the lowest available on the VM was 4.6 GB (4,625 MB) in the first run and 4.7 GB (4,726 MB) in the second, both during `silver_stop_times`. A shorter dip between samples wouldn't show.
+- Bronze `stop_times` was much larger than on 2026-11-15 (12,605,427 rows against 8,005,802). It isn't duplicated: the row count equals the lines in that day's zip, no (`trip_id`, `stop_sequence`) repeats, and the feed had 335,022 trips against 214,625.
+- Not checked: a run started by the daily capture (the two runs were triggered by hand), and the reject and failure paths on real data, since nothing was rejected. Those are covered by tests only.
+
 ## Not in this stage
 
 Gold, the quality gate (including the reference checks silver leaves out), alerts, the service-date expansion (which trips run on a given day, from `calendar`), and turning time offsets into timestamps. Those are gold's.
 
-## Left to the builder
+## How the open details were settled
 
-- Where the shared code lives (for example `src/transit/lakehouse.py` for `cleanup` and paths, `src/transit/silver.py` for the table rules).
-- Exact reason codes, as long as they're short and stable.
-- How the bus lists are built inside each job (joins against bronze, or small lists collected once).
+- **Where the shared code lives:** `src/transit/lakehouse.py` has `cleanup`, the table paths and which bronze tables each silver table reads. `src/transit/silver.py` has the bus filter, the table rules and the build, and `src/transit/jobs/silver.py` is the job.
+- **Reason codes:** `missing_<column>` and `bad_<column>`, named after the bronze column (`bad_arrival_time`), plus `departure_before_arrival`, `start_after_end` and `duplicate_key`. A row gets the first one that applies, in that order: its columns, then the cross-column check, then the duplicate key.
+- **The bus filter:** left semi joins against bronze inside each job, not lists collected to the driver.
