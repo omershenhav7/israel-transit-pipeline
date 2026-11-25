@@ -350,7 +350,7 @@ REJECTS = "_rejects"
 
 
 class SilverBuildError(Exception):
-    """A silver build cannot proceed: missing bronze, too many rejects, or a count mismatch."""
+    """A silver build cannot proceed: missing bronze, no bus rows, too many rejects, or a count mismatch."""
 
 
 @dataclass(frozen=True)
@@ -390,8 +390,8 @@ def build_silver_table(
     """Build one silver table for one day from bronze, with its rejects, then apply retention.
 
     Raises SilverBuildError when a bronze partition is missing (before writing anything), when
-    rejects exceed REJECT_LIMIT of the bus rows (after writing the rejects and deleting the
-    day's silver partition), or when the rows written differ from the rows kept.
+    there are no bus rows or rejects exceed REJECT_LIMIT of them (after writing the rejects and
+    deleting the day's silver partition), or when the rows written differ from the rows kept.
     """
     from delta.tables import DeltaTable
 
@@ -418,9 +418,15 @@ def build_silver_table(
         _write_day(rejects, rejects_path, f"feed_date = '{iso}' AND `table` = '{table}'")
 
         bus = kept + rejected
-        if bus and rejected / bus > REJECT_LIMIT:
+        if bus == 0 or rejected / bus > REJECT_LIMIT:
+            # On purpose: an earlier run's rows would no longer match this run's rejects, and gold
+            # could build from them. The day is rebuilt from bronze once the cause is fixed.
             if DeltaTable.isDeltaTable(spark, silver_path):
                 DeltaTable.forPath(spark, silver_path).delete(f"feed_date = '{iso}'")
+            if bus == 0:
+                raise SilverBuildError(
+                    f"silver {table} {iso}: no bus rows among {non_bus} bronze rows"
+                )
             top = (
                 rejected_rows.groupBy("_reason").count()
                 .orderBy(F.desc("count"), "_reason").limit(3).collect()

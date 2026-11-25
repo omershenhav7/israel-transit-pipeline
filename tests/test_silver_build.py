@@ -170,6 +170,23 @@ def test_over_limit_deletes_existing_partition(spark, tmp_path):
     assert plain(read(spark, tmp_path, "stop_times", DAY2)) == other_day
 
 
+def test_no_bus_rows_fails_and_writes_no_partition(spark, tmp_path):
+    put(spark, tmp_path, "routes", [route(route_type="2")])
+    with pytest.raises(silver.SilverBuildError, match="routes 2026-11-15: no bus rows"):
+        build(spark, tmp_path, "routes")
+    assert read(spark, tmp_path, "routes", DAY) == []
+
+
+def test_no_bus_rows_deletes_existing_partition(spark, tmp_path):
+    for d in (DAY, DAY2):
+        put(spark, tmp_path, "routes", [route()], d)
+        build(spark, tmp_path, "routes", d, DAY2)
+    put(spark, tmp_path, "routes", [route(route_type="2")], DAY)
+    with pytest.raises(silver.SilverBuildError, match="no bus rows"):
+        build(spark, tmp_path, "routes", DAY, DAY2)
+    assert days_in(spark, tmp_path, "routes") == [DAY2]
+
+
 def test_rebuild_clears_old_rejects(spark, tmp_path):
     # routes: one bad route of two is over the limit, which still leaves its reject
     put(spark, tmp_path, "routes", [route(), route(route_id="9", route_desc="x")])

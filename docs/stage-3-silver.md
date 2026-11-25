@@ -167,7 +167,7 @@ One table, `silver/_rejects`, partitioned by `feed_date`:
 
 Each silver job replaces its own rejects with `replaceWhere feed_date = '<date>' AND table = '<table>'`, so rebuilding one table doesn't touch the others' rejects.
 
-**The 0.1% limit:** for each table, rejected rows ÷ bus rows must be at most 0.1%, where bus rows are as defined above (kept + rejected). Above that the job writes the rejects, so the reason can be read, then **deletes that day's partition of the silver table** and fails (*my call*: on a rebuild, leaving the earlier run's rows would let gold build from data that no longer matches the rejects). In `operators` (29 rows) a single reject is over the limit. That's intended: in a table that small, any bad row is worth stopping for.
+**The 0.1% limit:** for each table, rejected rows ÷ bus rows must be at most 0.1%, where bus rows are as defined above (kept + rejected). Above that the job writes the rejects, so the reason can be read, then **deletes that day's partition of the silver table** and fails (*my call*: on a rebuild, leaving the earlier run's rows would let gold build from data that no longer matches the rejects). In `operators` (29 rows) a single reject is over the limit. That's intended: in a table that small, any bad row is worth stopping for. A table with no bus rows at all fails the same way: it means the bus filter stopped matching, not that there are no buses.
 
 ## Order of the jobs
 
@@ -194,7 +194,7 @@ spark-submit src/transit/jobs/silver.py --table stop_times --feed-date 2026-11-1
 2. Keep only bus rows.
 3. Type, split and check each row on its own. Mark each one as kept or rejected with a reason.
 4. Write the rejects, replacing this table's rejects for the day.
-5. Check the 0.1% limit. If it's exceeded, delete the day's silver partition and fail.
+5. Check that there are bus rows and that the 0.1% limit holds. If not, delete the day's silver partition and fail.
 6. Write the kept rows with `replaceWhere feed_date = '<date>'`.
 7. Check the count: the rows written for the day equal the kept rows.
 8. Clean up: the same 7-day retention and `VACUUM` as bronze, on this table and on `_rejects`. `cleanup()` moves from `bronze.py` to a shared module.
@@ -225,6 +225,7 @@ Against small local Delta tables, like the bronze tests:
 - An empty `stop_desc` gives null street and city, not a reject.
 - Duplicate keys reject every copy.
 - Rejects above 0.1% fail the job, write the rejects, and leave no partition for that day in the silver table.
+- No bus rows fails the job and leaves no partition for that day in the silver table.
 - Building the same day twice gives the same rows. Building a second day doesn't change the first.
 - A missing bronze partition fails without writing.
 - Retention removes partitions older than 7 days, in the table and in `_rejects`.
